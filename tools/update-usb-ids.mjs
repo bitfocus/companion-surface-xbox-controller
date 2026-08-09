@@ -5,7 +5,8 @@ import path from 'node:path'
 // eslint-disable-next-line n/no-unpublished-import
 import prettier from 'prettier'
 // Reads the compiled output, so the product table in src/products.ts stays the single source of
-// truth. This runs after build:main for that reason.
+// truth. Both scripts that invoke this — `build` and `build:manifest-usb-ids` — compile first, so
+// don't run this file directly on a clean checkout.
 // eslint-disable-next-line n/no-unpublished-import
 import { PRODUCTS } from '../dist/products.js'
 
