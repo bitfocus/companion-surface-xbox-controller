@@ -1,0 +1,17 @@
+{
+	"$schema": "../node_modules/@companion-surface/base/assets/manifest.schema.json",
+	"type": "surface",
+	"id": "xbox-controller",
+	"name": "Xbox Controller",
+	"shortname": "xbox-controller",
+	"description": "Use a locally connected Xbox controller as a surface, over USB or Bluetooth",
+	"version": "0.0.0",
+	"license": "MIT",
+	"repository": "git+https://github.com/bitfocus/companion-surface-xbox-controller.git",
+	"bugs": "https://github.com/bitfocus/companion-surface-xbox-controller/issues",
+	"maintainers": [{ "name": "Joseph Adams", "email": "joseph@josephadams.dev" }],
+	"runtime": { "type": "node22", "apiVersion": "0.0.0", "entrypoint": "../dist/main.js" },
+	"keywords": ["xbox", "controller", "gamepad", "game controller"],
+	"products": ["Xbox Series X|S Controller", "Xbox One Controller", "Xbox Elite Controller"],
+	"usbIds": [{ "vendorId": 1118, "productIds": [2834, 2835, 2848, 2849, 736, 746, 765, 2816, 2821, 2850, 2826, 2828] }]
+}
