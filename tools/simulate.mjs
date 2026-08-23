@@ -41,7 +41,7 @@ const BUTTON = {
 }
 
 /** Build a GIP input frame (command 0x20) */
-function frame({ buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0 } = {}) {
+function frame({ buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0, share = false } = {}) {
 	const buf = Buffer.alloc(19)
 	buf[0] = 0x20
 	buf[1] = 0x00
@@ -54,6 +54,7 @@ function frame({ buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0 } =
 	buf.writeInt16LE(ly, 12)
 	buf.writeInt16LE(rx, 14)
 	buf.writeInt16LE(ry, 16)
+	if (share) buf[18] = 0x01
 	return buf
 }
 
@@ -110,11 +111,17 @@ const context = {
 }
 
 class FakeDevice extends EventEmitter {
+	written = []
+	async write(data) {
+		this.written.push(Buffer.from(data))
+		return data.length
+	}
 	async close() {}
 }
 
 const device = new FakeDevice()
 const surface = new XboxControllerWrapper('test', device, xboxControllerInfo, 'Test Pad', context)
+await surface.init()
 await surface.updateConfig({ stickDeadzone: 15, pressThreshold: 50, rotaryMaxRate: 15 })
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -165,6 +172,8 @@ await check('Menu', frame({ buttons: BUTTON.menu }), ['up 1/4', 'down 1/5'])
 await check('Menu released', frame(), ['up 1/5'])
 await check('Xbox button (guide frame)', guideFrame(true), ['down 1/6'])
 await check('Xbox button released', guideFrame(false), ['up 1/6'])
+await check('USB Share button (Series X|S 19th byte)', frame({ share: true }), ['down 1/7'])
+await check('USB Share released', frame(), ['up 1/7'])
 
 console.log('\n--- stick clicks ---')
 await check('both stick clicks', frame({ buttons: BUTTON.leftStickClick | BUTTON.rightStickClick }), [
@@ -273,6 +282,22 @@ await check('BT stick up is positive', btFrame({ ly: -1 }), ['down 2/0', 'rotR 2
 	settle: 80,
 })
 await check('BT stick centred', btFrame(), ['up 2/0', 'var leftStickYVariable=0'], { settle: 80 })
+
+console.log('\n--- raw bluetooth reports (without report id prefix) ---')
+const rawBtFrame = (opts) => btFrame(opts).subarray(1)
+await check('Raw BT A button', rawBtFrame({ buttons1: 0x01 }), ['down 0/0'])
+await check('Raw BT A released', rawBtFrame(), ['up 0/0'])
+await check('Raw BT Share button', rawBtFrame({ buttons3: 0x01 }), ['down 1/7'])
+await check('Raw BT Share released', rawBtFrame(), ['up 1/7'])
+
+console.log('\n--- GIP initialization handshake ---')
+const initPacketsSent =
+	device.written.length === 3 &&
+	device.written[0][0] === 0x05 &&
+	device.written[1][0] === 0x0a &&
+	device.written[2][0] === 0x06
+if (!initPacketsSent) failures++
+console.log(`${initPacketsSent ? 'PASS' : 'FAIL'}  GIP init packets sent (${device.written.length} packets)`)
 
 console.log('\n--- frames we should ignore ---')
 await check('short frame ignored', Buffer.alloc(4), [])

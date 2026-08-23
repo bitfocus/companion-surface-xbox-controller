@@ -30,6 +30,9 @@ const USAGE_MULTI_AXIS = 0x08
  * since the product id has already told us it is a controller we support.
  */
 function isGamepadCollection(device: HIDDevice): boolean {
+	// Filter out secondary interfaces (e.g. audio/headset endpoints on interface 1 or 2)
+	if (device.interface !== undefined && device.interface > 0) return false
+
 	if (device.usagePage === undefined || device.usage === undefined) return true
 	if (device.usagePage !== USAGE_PAGE_GENERIC_DESKTOP) return false
 

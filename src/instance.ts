@@ -44,6 +44,19 @@ interface RotaryState {
 	interval: ReturnType<typeof setInterval> | undefined
 }
 
+/**
+ * GIP initialization sequence packets for Xbox One and Xbox Series X|S controllers over USB.
+ * Over USB, the controller starts in a dormant state and will not stream input frames until initialized.
+ */
+const GIP_INIT_PACKETS = [
+	// Power on
+	Buffer.from([0x05, 0x20, 0x00, 0x01, 0x00]),
+	// Enable Home / Guide LED
+	Buffer.from([0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14]),
+	// Security handshake acknowledgement
+	Buffer.from([0x06, 0x20, 0x00, 0x02, 0x01, 0x00]),
+]
+
 export class XboxControllerWrapper implements SurfaceInstance {
 	readonly #logger: ModuleLogger
 
@@ -252,8 +265,21 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		}
 	}
 
+	async #sendInitPackets(): Promise<void> {
+		for (const packet of GIP_INIT_PACKETS) {
+			try {
+				if (typeof this.#device.write === 'function') {
+					await this.#device.write(packet)
+				}
+			} catch (e) {
+				// Non-fatal: Bluetooth devices or platforms without output report support can ignore
+				this.#logger.debug(`Could not write init packet (cmd 0x${packet[0]?.toString(16)}): ${e}`)
+			}
+		}
+	}
+
 	async init(): Promise<void> {
-		// The device was opened before this instance was constructed
+		await this.#sendInitPackets()
 	}
 
 	async close(): Promise<void> {
