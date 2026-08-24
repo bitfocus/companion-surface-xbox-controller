@@ -106,10 +106,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		this.#device.on('data', (data: Buffer) => {
 			if (this.#closed) return
 
-			this.#logger.debug(`Received HID report (${data.length} bytes): ${data.toString('hex')}`)
-
 			if (!parseInputReport(data, this.#state)) {
-				this.#logger.debug(`Ignoring unrecognised report of ${data.length} bytes: ${data.toString('hex')}`)
+				this.#logger.debug(`Ignoring unrecognised report of ${data.length} bytes`)
 				return
 			}
 
@@ -218,10 +216,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		if (this.#checkLocked()) return
 
 		if (pressed) {
-			this.#logger.debug(`Button down: ${key} (${controlId})`)
 			this.#context.keyDownById(controlId)
 		} else {
-			this.#logger.debug(`Button up: ${key} (${controlId})`)
 			this.#context.keyUpById(controlId)
 		}
 	}
@@ -244,10 +240,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		const rotateRight = level > 0
 		const emit = () => {
 			if (rotateRight) {
-				this.#logger.debug(`Rotary right: ${control} (${controlId})`)
 				this.#context.rotateRightById(controlId)
 			} else {
-				this.#logger.debug(`Rotary left: ${control} (${controlId})`)
 				this.#context.rotateLeftById(controlId)
 			}
 		}
