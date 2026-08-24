@@ -24,6 +24,8 @@ import { createEmptyState, parseInputReport, type GamepadState } from './report.
 import { DEFAULT_CONFIG, parseConfig, type XboxControllerConfig } from './config.js'
 import { AXIS_VARIABLES } from './variables.js'
 
+import type { ControllerProduct } from './products.js'
+
 const TRIGGERS: TriggerControl[] = ['leftTrigger', 'rightTrigger']
 
 /** Release at this fraction of the press threshold, so a stick held near the edge doesn't chatter */
@@ -47,14 +49,11 @@ interface RotaryState {
 /**
  * GIP initialization sequence packets for Xbox One and Xbox Series X|S controllers over USB.
  * Over USB, the controller starts in a dormant state and will not stream input frames until initialized.
+ * (Bluetooth controllers are standard HID and must NOT receive GIP packets).
  */
 const GIP_INIT_PACKETS = [
 	// Power on
 	Buffer.from([0x05, 0x20, 0x00, 0x01, 0x00]),
-	// Enable Home / Guide LED
-	Buffer.from([0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14]),
-	// Security handshake acknowledgement
-	Buffer.from([0x06, 0x20, 0x00, 0x02, 0x01, 0x00]),
 ]
 
 export class XboxControllerWrapper implements SurfaceInstance {
@@ -62,6 +61,7 @@ export class XboxControllerWrapper implements SurfaceInstance {
 
 	readonly #device: HIDAsync
 	readonly #modelInfo: ControllerModelInfo
+	readonly #product: ControllerProduct | undefined
 	readonly #productName: string
 
 	readonly #surfaceId: string
@@ -91,12 +91,14 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		surfaceId: string,
 		device: HIDAsync,
 		info: ControllerModelInfo,
+		product: ControllerProduct | undefined,
 		productName: string,
 		context: SurfaceContext,
 	) {
 		this.#logger = createModuleLogger(`Instance/${surfaceId}`)
 		this.#device = device
 		this.#modelInfo = info
+		this.#product = product
 		this.#productName = productName
 		this.#surfaceId = surfaceId
 		this.#context = context
@@ -104,8 +106,10 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		this.#device.on('data', (data: Buffer) => {
 			if (this.#closed) return
 
+			this.#logger.debug(`Received HID report (${data.length} bytes): ${data.toString('hex')}`)
+
 			if (!parseInputReport(data, this.#state)) {
-				this.#logger.debug(`Ignoring unrecognised report of ${data.length} bytes`)
+				this.#logger.debug(`Ignoring unrecognised report of ${data.length} bytes: ${data.toString('hex')}`)
 				return
 			}
 
@@ -196,8 +200,10 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		if (!controlId) return
 
 		if (pressed) {
+			this.#logger.debug(`Button down: ${key} (${controlId})`)
 			this.#context.keyDownById(controlId)
 		} else {
+			this.#logger.debug(`Button up: ${key} (${controlId})`)
 			this.#context.keyUpById(controlId)
 		}
 	}
@@ -218,8 +224,10 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		const rotateRight = level > 0
 		const emit = () => {
 			if (rotateRight) {
+				this.#logger.debug(`Rotary right: ${control} (${controlId})`)
 				this.#context.rotateRightById(controlId)
 			} else {
+				this.#logger.debug(`Rotary left: ${control} (${controlId})`)
 				this.#context.rotateLeftById(controlId)
 			}
 		}
@@ -279,7 +287,9 @@ export class XboxControllerWrapper implements SurfaceInstance {
 	}
 
 	async init(): Promise<void> {
-		await this.#sendInitPackets()
+		if (this.#product?.transport === 'usb') {
+			await this.#sendInitPackets()
+		}
 	}
 
 	async close(): Promise<void> {

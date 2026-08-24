@@ -130,12 +130,12 @@ const XboxControllerPlugin: SurfacePlugin<HIDDevice> = {
 		const product = findProduct(pluginInfo.vendorId, pluginInfo.productId)
 		const productName = pluginInfo.product || product?.name || 'Xbox Controller'
 
-		logger.debug(`Opening ${productName} (${surfaceId})`)
+		logger.debug(`Opening ${productName} (${surfaceId}) [transport: ${product?.transport ?? 'unknown'}]`)
 
 		const device = await openDevice(pluginInfo.path)
 		try {
 			return {
-				surface: new XboxControllerWrapper(surfaceId, device, xboxControllerInfo, productName, context),
+				surface: new XboxControllerWrapper(surfaceId, device, xboxControllerInfo, product, productName, context),
 				registerProps: {
 					brightness: false,
 					surfaceLayout: createSurfaceSchema(xboxControllerInfo),

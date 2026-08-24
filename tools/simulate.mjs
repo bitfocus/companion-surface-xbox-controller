@@ -120,7 +120,8 @@ class FakeDevice extends EventEmitter {
 }
 
 const device = new FakeDevice()
-const surface = new XboxControllerWrapper('test', device, xboxControllerInfo, 'Test Pad', context)
+const fakeProduct = { vendorId: 0x045e, productId: 0x0b12, modelId: 'xbox-series', transport: 'usb', name: 'Test Pad' }
+const surface = new XboxControllerWrapper('test', device, xboxControllerInfo, fakeProduct, 'Test Pad', context)
 await surface.init()
 await surface.updateConfig({ stickDeadzone: 15, pressThreshold: 50, rotaryMaxRate: 15 })
 
@@ -291,13 +292,9 @@ await check('Raw BT Share button', rawBtFrame({ buttons3: 0x01 }), ['down 1/7'])
 await check('Raw BT Share released', rawBtFrame(), ['up 1/7'])
 
 console.log('\n--- GIP initialization handshake ---')
-const initPacketsSent =
-	device.written.length === 3 &&
-	device.written[0][0] === 0x05 &&
-	device.written[1][0] === 0x0a &&
-	device.written[2][0] === 0x06
+const initPacketsSent = device.written.length === 1 && device.written[0][0] === 0x05
 if (!initPacketsSent) failures++
-console.log(`${initPacketsSent ? 'PASS' : 'FAIL'}  GIP init packets sent (${device.written.length} packets)`)
+console.log(`${initPacketsSent ? 'PASS' : 'FAIL'}  GIP power-on init packet sent (${device.written.length} packets)`)
 
 console.log('\n--- frames we should ignore ---')
 await check('short frame ignored', Buffer.alloc(4), [])
