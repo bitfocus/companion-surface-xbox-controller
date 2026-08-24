@@ -18,16 +18,17 @@ import { transferVariables } from './variables.js'
 const logger = createModuleLogger('Plugin')
 
 const USAGE_PAGE_GENERIC_DESKTOP = 0x01
+const USAGE_POINTER = 0x01
 const USAGE_JOYSTICK = 0x04
 const USAGE_GAMEPAD = 0x05
 const USAGE_MULTI_AXIS = 0x08
 
 /**
- * A controller can publish several HID collections, only one of which carries the gamepad
- * reports. Skip the others, otherwise we'd open the same controller more than once.
+ * A controller can publish several HID collections. On macOS over Bluetooth, for example,
+ * it publishes both a Gamepad (0x05) and a Pointer (0x01) collection under Generic Desktop.
  *
- * Not every platform reports usage information. When it's missing we have to accept the device,
- * since the product id has already told us it is a controller we support.
+ * Skip non-controller collections (such as audio/headset endpoints), while accepting all
+ * valid controller collections so device opening is not blocked.
  */
 function isGamepadCollection(device: HIDDevice): boolean {
 	// Filter out secondary interfaces (e.g. audio/headset endpoints on interface 1 or 2)
@@ -36,7 +37,30 @@ function isGamepadCollection(device: HIDDevice): boolean {
 	if (device.usagePage === undefined || device.usage === undefined) return true
 	if (device.usagePage !== USAGE_PAGE_GENERIC_DESKTOP) return false
 
-	return device.usage === USAGE_GAMEPAD || device.usage === USAGE_JOYSTICK || device.usage === USAGE_MULTI_AXIS
+	return (
+		device.usage === USAGE_GAMEPAD ||
+		device.usage === USAGE_JOYSTICK ||
+		device.usage === USAGE_MULTI_AXIS ||
+		device.usage === USAGE_POINTER
+	)
+}
+
+/**
+ * Normalize serial numbers that may be hex-encoded ASCII characters when read over USB
+ * (e.g. "3039373030393533343837323235" -> "09700953487225").
+ */
+function normalizeSerialNumber(serialNumber: string): string {
+	if (serialNumber.length >= 10 && serialNumber.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(serialNumber)) {
+		try {
+			const decoded = Buffer.from(serialNumber, 'hex').toString('utf8')
+			if (/^[0-9A-Za-z_-]+$/.test(decoded)) {
+				return decoded
+			}
+		} catch {
+			// keep original
+		}
+	}
+	return serialNumber
 }
 
 /**
@@ -86,9 +110,10 @@ const XboxControllerPlugin: SurfacePlugin<HIDDevice> = {
 		logger.debug(`Found ${product.name} at ${device.path}`)
 
 		const hasSerial = hasRealSerialNumber(device)
+		const serial = hasSerial ? normalizeSerialNumber(device.serialNumber) : product.modelId
 
 		return {
-			surfaceId: hasSerial ? `xbox:${device.serialNumber}` : `xbox:${product.modelId}`,
+			surfaceId: `xbox:${serial}`,
 			// Without a real serial we can't tell two of the same controller apart, so let the host
 			// disambiguate them
 			surfaceIdIsNotUnique: !hasSerial,
