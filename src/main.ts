@@ -14,8 +14,13 @@ import { xboxControllerInfo } from './models.js'
 import { findProduct } from './products.js'
 import { configFields } from './config.js'
 import { transferVariables } from './variables.js'
+import { xinputDetection } from './xinput/detection.js'
+import { XboxXInputSurfaceWrapper } from './xinput/instance.js'
+import type { XInputDeviceInfo } from './xinput/types.js'
 
 const logger = createModuleLogger('Plugin')
+
+export type ControllerSurfaceInfo = HIDDevice | XInputDeviceInfo
 
 const USAGE_PAGE_GENERIC_DESKTOP = 0x01
 const USAGE_POINTER = 0x01
@@ -90,15 +95,21 @@ async function openDevice(path: string): Promise<HIDAsync> {
 	}
 }
 
-const XboxControllerPlugin: SurfacePlugin<HIDDevice> = {
+const XboxControllerPlugin: SurfacePlugin<ControllerSurfaceInfo> = {
+	detection: process.platform === 'win32' ? xinputDetection : undefined,
+
 	init: async (): Promise<void> => {
-		// Not used
+		if (process.platform === 'win32') {
+			xinputDetection.start()
+		}
 	},
 	destroy: async (): Promise<void> => {
-		// Not used
+		if (process.platform === 'win32') {
+			xinputDetection.stop()
+		}
 	},
 
-	checkSupportsHidDevice: (device: HIDDevice): DiscoveredSurfaceInfo<HIDDevice> | null => {
+	checkSupportsHidDevice: (device: HIDDevice): DiscoveredSurfaceInfo<ControllerSurfaceInfo> | null => {
 		const product = findProduct(device.vendorId, device.productId)
 		if (!product) return null
 
@@ -124,15 +135,31 @@ const XboxControllerPlugin: SurfacePlugin<HIDDevice> = {
 
 	openSurface: async (
 		surfaceId: string,
-		pluginInfo: HIDDevice,
+		pluginInfo: ControllerSurfaceInfo,
 		context: SurfaceContext,
 	): Promise<OpenSurfaceResult> => {
-		const product = findProduct(pluginInfo.vendorId, pluginInfo.productId)
-		const productName = pluginInfo.product || product?.name || 'Xbox Controller'
+		if ('transport' in pluginInfo && pluginInfo.transport === 'xinput') {
+			logger.info(`Opening ${pluginInfo.name} (${surfaceId}) via XInput`)
+			return {
+				surface: new XboxXInputSurfaceWrapper(surfaceId, pluginInfo, xboxControllerInfo, context),
+				registerProps: {
+					brightness: false,
+					surfaceLayout: createSurfaceSchema(xboxControllerInfo),
+					pincodeMap: null,
+					configFields,
+					transferVariables,
+					location: null,
+				},
+			}
+		}
+
+		const hidDevice = pluginInfo as HIDDevice
+		const product = findProduct(hidDevice.vendorId, hidDevice.productId)
+		const productName = hidDevice.product || product?.name || 'Xbox Controller'
 
 		logger.debug(`Opening ${productName} (${surfaceId}) [transport: ${product?.transport ?? 'unknown'}]`)
 
-		const device = await openDevice(pluginInfo.path)
+		const device = await openDevice(hidDevice.path)
 		try {
 			return {
 				surface: new XboxControllerWrapper(surfaceId, device, xboxControllerInfo, product, productName, context),

@@ -124,6 +124,15 @@ export const PRODUCTS: ControllerProduct[] = [
 		transport: 'bluetooth',
 		name: 'Xbox Adaptive Controller',
 	},
+
+	// Xbox 360 / Virtual XInput HID Wrapper on Windows
+	{
+		vendorId: VENDOR_ID_MICROSOFT,
+		productId: 0x028e,
+		modelId: ControllerModelId.XboxOne,
+		transport: 'usb',
+		name: 'Xbox Controller (XInput HID)',
+	},
 ]
 
 export function findProduct(vendorId: number, productId: number): ControllerProduct | undefined {

@@ -28,6 +28,7 @@
 	},
 	"dependencies": {
 		"@companion-surface/base": "~1.1.0",
+		"koffi": "^3.1.6",
 		"node-hid": "^3.4.0"
 	},
 	"devDependencies": {
