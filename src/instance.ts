@@ -192,12 +192,30 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			: magnitude >= this.#config.pressThreshold
 	}
 
+	#warnedLocked = false
+
+	#checkLocked(): boolean {
+		if (this.#context.isLocked) {
+			if (!this.#warnedLocked) {
+				this.#warnedLocked = true
+				this.#logger.warn(
+					'Surface is currently LOCKED by Companion (PIN lockout is active). In Companion Surfaces tab, select this controller and enable "Never lock this surface" to receive button and variable inputs.',
+				)
+			}
+			return true
+		}
+		this.#warnedLocked = false
+		return false
+	}
+
 	#setPressed(key: ControlKey, pressed: boolean): void {
 		if ((this.#pressed.get(key) ?? false) === pressed) return
 		this.#pressed.set(key, pressed)
 
 		const controlId = controlKeyToId(this.#modelInfo, key)
 		if (!controlId) return
+
+		if (this.#checkLocked()) return
 
 		if (pressed) {
 			this.#logger.debug(`Button down: ${key} (${controlId})`)
@@ -220,6 +238,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			this.#rotaries.set(control, { level, interval: undefined })
 			return
 		}
+
+		if (this.#checkLocked()) return
 
 		const rotateRight = level > 0
 		const emit = () => {
@@ -248,6 +268,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		this.#variableFlush = setTimeout(() => {
 			this.#variableFlush = undefined
 			if (this.#closed) return
+
+			if (this.#checkLocked()) return
 
 			for (const [variableId, value] of this.#pendingVariables) {
 				this.#sentVariables.set(variableId, value)
