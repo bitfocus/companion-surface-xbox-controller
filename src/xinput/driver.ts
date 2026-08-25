@@ -83,7 +83,7 @@ export class XInputDriver {
 
 			// Try ordinal 100 for XInputGetStateEx (includes Xbox Guide button bit)
 			try {
-				const fnEx = lib.func(100, '__stdcall', 'uint32', ['uint32', koffi.out(koffi.pointer(XINPUT_STATE))])
+				const fnEx = lib.func('__stdcall', 100, 'uint32_t', ['uint32_t', koffi.out(koffi.pointer(XINPUT_STATE))])
 				if (fnEx) {
 					this.#getStateFn = fnEx
 					logger.debug('Using XInputGetStateEx (ordinal 100) with Guide button support')
@@ -94,7 +94,10 @@ export class XInputDriver {
 			}
 
 			try {
-				const fn = lib.func('XInputGetState', '__stdcall', 'uint32', ['uint32', koffi.out(koffi.pointer(XINPUT_STATE))])
+				const fn = lib.func('__stdcall', 'XInputGetState', 'uint32_t', [
+					'uint32_t',
+					koffi.out(koffi.pointer(XINPUT_STATE)),
+				])
 				if (fn) {
 					this.#getStateFn = fn
 					logger.debug('Using standard XInputGetState')
