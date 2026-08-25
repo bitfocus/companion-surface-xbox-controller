@@ -6,7 +6,6 @@ import {
 	type SurfaceContext,
 	type SurfacePlugin,
 } from '@companion-surface/base'
-import { createHash } from 'node:crypto'
 import { HIDAsync } from 'node-hid'
 import { XboxControllerWrapper } from './instance.js'
 import { createSurfaceSchema } from './surface-schema.js'
@@ -14,6 +13,7 @@ import { xboxControllerInfo } from './models.js'
 import { findProduct } from './products.js'
 import { configFields } from './config.js'
 import { transferVariables } from './variables.js'
+import { checkSupportsHidDevice } from './hid.js'
 import { xinputDetection } from './xinput/detection.js'
 import { XboxXInputSurfaceWrapper } from './xinput/instance.js'
 import type { XInputDeviceInfo } from './xinput/types.js'
@@ -21,65 +21,6 @@ import type { XInputDeviceInfo } from './xinput/types.js'
 const logger = createModuleLogger('Plugin')
 
 export type ControllerSurfaceInfo = HIDDevice | XInputDeviceInfo
-
-const USAGE_PAGE_GENERIC_DESKTOP = 0x01
-const USAGE_POINTER = 0x01
-const USAGE_JOYSTICK = 0x04
-const USAGE_GAMEPAD = 0x05
-const USAGE_MULTI_AXIS = 0x08
-
-/**
- * A controller can publish several HID collections. On macOS over Bluetooth, for example,
- * it publishes both a Gamepad (0x05) and a Pointer (0x01) collection under Generic Desktop.
- *
- * Skip non-controller collections (such as audio/headset endpoints), while accepting all
- * valid controller collections so device opening is not blocked.
- */
-function isGamepadCollection(device: HIDDevice): boolean {
-	// Filter out secondary interfaces (e.g. audio/headset endpoints on interface 1 or 2)
-	if (device.interface !== undefined && device.interface > 0) return false
-
-	if (device.usagePage === undefined || device.usage === undefined) return true
-	if (device.usagePage !== USAGE_PAGE_GENERIC_DESKTOP) return false
-
-	return (
-		device.usage === USAGE_GAMEPAD ||
-		device.usage === USAGE_JOYSTICK ||
-		device.usage === USAGE_MULTI_AXIS ||
-		device.usage === USAGE_POINTER
-	)
-}
-
-/**
- * Normalize serial numbers that may be hex-encoded ASCII characters when read over USB
- * (e.g. "3039373030393533343837323235" -> "09700953487225").
- */
-function normalizeSerialNumber(serialNumber: string): string {
-	if (serialNumber.length >= 10 && serialNumber.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(serialNumber)) {
-		try {
-			const decoded = Buffer.from(serialNumber, 'hex').toString('utf8')
-			if (/^[0-9A-Za-z_-]+$/.test(decoded)) {
-				return decoded
-			}
-		} catch {
-			// keep original
-		}
-	}
-	return serialNumber
-}
-
-/**
- * Companion invents a serial number for devices that don't report one, by hashing the vendor and
- * product ids. That means two identical controllers get the same value, so it's no use as an id.
- * Recognise it by recreating it.
- */
-function hasRealSerialNumber(device: HIDDevice): boolean {
-	if (!device.serialNumber) return false
-
-	const synthetic = createHash('sha1').update(`${device.vendorId}:${device.productId}`).digest('hex').slice(0, 20)
-
-	return device.serialNumber !== synthetic
-}
 
 /**
  * Open the device, preferring an exclusive claim so that other software on the machine can't
@@ -110,27 +51,7 @@ const XboxControllerPlugin: SurfacePlugin<ControllerSurfaceInfo> = {
 	},
 
 	checkSupportsHidDevice: (device: HIDDevice): DiscoveredSurfaceInfo<ControllerSurfaceInfo> | null => {
-		const product = findProduct(device.vendorId, device.productId)
-		if (!product) return null
-
-		if (!isGamepadCollection(device)) {
-			logger.debug(`Skipping non-gamepad collection of ${product.name} (usage ${device.usage})`)
-			return null
-		}
-
-		logger.debug(`Found ${product.name} at ${device.path}`)
-
-		const hasSerial = hasRealSerialNumber(device)
-		const serial = hasSerial ? normalizeSerialNumber(device.serialNumber) : product.modelId
-
-		return {
-			surfaceId: `xbox:${serial}`,
-			// Without a real serial we can't tell two of the same controller apart, so let the host
-			// disambiguate them
-			surfaceIdIsNotUnique: !hasSerial,
-			description: `${device.manufacturer ? `${device.manufacturer} ` : ''}${device.product || product.name}`.trim(),
-			pluginInfo: device,
-		}
+		return checkSupportsHidDevice(device)
 	},
 
 	openSurface: async (
