@@ -18,6 +18,8 @@ const distDir = path.join(import.meta.dirname, '../dist')
 const importDist = (file) => import(pathToFileURL(path.join(distDir, file)).href)
 
 const { XboxControllerWrapper } = await importDist('instance.js')
+const { XboxXInputSurfaceWrapper } = await importDist('xinput/instance.js')
+const { sharedXInputDriver } = await importDist('xinput/driver.js')
 const { xboxControllerInfo } = await importDist('models.js')
 
 const STICK_MAX = 32767
@@ -41,7 +43,7 @@ const BUTTON = {
 }
 
 /** Build a GIP input frame (command 0x20) */
-function frame({ buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0 } = {}) {
+function frame({ buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0, share = false } = {}) {
 	const buf = Buffer.alloc(19)
 	buf[0] = 0x20
 	buf[1] = 0x00
@@ -54,6 +56,7 @@ function frame({ buttons = 0, lt = 0, rt = 0, lx = 0, ly = 0, rx = 0, ry = 0 } =
 	buf.writeInt16LE(ly, 12)
 	buf.writeInt16LE(rx, 14)
 	buf.writeInt16LE(ry, 16)
+	if (share) buf[18] = 0x01
 	return buf
 }
 
@@ -110,11 +113,18 @@ const context = {
 }
 
 class FakeDevice extends EventEmitter {
+	written = []
+	async write(data) {
+		this.written.push(Buffer.from(data))
+		return data.length
+	}
 	async close() {}
 }
 
 const device = new FakeDevice()
-const surface = new XboxControllerWrapper('test', device, xboxControllerInfo, 'Test Pad', context)
+const fakeProduct = { vendorId: 0x045e, productId: 0x0b12, modelId: 'xbox-series', transport: 'usb', name: 'Test Pad' }
+const surface = new XboxControllerWrapper('test', device, xboxControllerInfo, fakeProduct, 'Test Pad', context)
+await surface.init()
 await surface.updateConfig({ stickDeadzone: 15, pressThreshold: 50, rotaryMaxRate: 15 })
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -165,6 +175,8 @@ await check('Menu', frame({ buttons: BUTTON.menu }), ['up 1/4', 'down 1/5'])
 await check('Menu released', frame(), ['up 1/5'])
 await check('Xbox button (guide frame)', guideFrame(true), ['down 1/6'])
 await check('Xbox button released', guideFrame(false), ['up 1/6'])
+await check('USB Share button (Series X|S 19th byte)', frame({ share: true }), ['down 1/7'])
+await check('USB Share released', frame(), ['up 1/7'])
 
 console.log('\n--- stick clicks ---')
 await check('both stick clicks', frame({ buttons: BUTTON.leftStickClick | BUTTON.rightStickClick }), [
@@ -274,9 +286,117 @@ await check('BT stick up is positive', btFrame({ ly: -1 }), ['down 2/0', 'rotR 2
 })
 await check('BT stick centred', btFrame(), ['up 2/0', 'var leftStickYVariable=0'], { settle: 80 })
 
+console.log('\n--- raw bluetooth reports (without report id prefix) ---')
+const rawBtFrame = (opts) => btFrame(opts).subarray(1)
+await check('Raw BT A button', rawBtFrame({ buttons1: 0x01 }), ['down 0/0'])
+await check('Raw BT A released', rawBtFrame(), ['up 0/0'])
+await check('Raw BT Share button', rawBtFrame({ buttons3: 0x01 }), ['down 1/7'])
+await check('Raw BT Share released', rawBtFrame(), ['up 1/7'])
+
+console.log('\n--- GIP initialization handshake ---')
+const initPacketsSent = device.written.length === 1 && device.written[0][0] === 0x05
+if (!initPacketsSent) failures++
+console.log(`${initPacketsSent ? 'PASS' : 'FAIL'}  GIP power-on init packet sent (${device.written.length} packets)`)
+
 console.log('\n--- frames we should ignore ---')
 await check('short frame ignored', Buffer.alloc(4), [])
 await check('unknown command byte ignored', Buffer.concat([Buffer.from([0x99]), Buffer.alloc(18)]), [])
+
+console.log('\n--- XInput instance emulation ---')
+let xiState = {
+	buttons: {},
+	axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 },
+}
+let xiConnected = true
+sharedXInputDriver.poll = (userIndex, target) => {
+	if (!xiConnected) return false
+	Object.assign(target.buttons, xiState.buttons)
+	Object.assign(target.axes, xiState.axes)
+	return true
+}
+
+let xiEvents = []
+const xiContext = {
+	isLocked: false,
+	keyDownById(id) {
+		xiEvents.push(`down ${id}`)
+	},
+	keyUpById(id) {
+		xiEvents.push(`up ${id}`)
+	},
+	rotateLeftById(id) {
+		xiEvents.push(`rotL ${id}`)
+	},
+	rotateRightById(id) {
+		xiEvents.push(`rotR ${id}`)
+	},
+	sendVariableValue(id, val) {
+		xiEvents.push(`var ${id}=${val}`)
+	},
+	disconnect() {},
+}
+
+const xiSurface = new XboxXInputSurfaceWrapper(
+	'xbox:xinput-1',
+	{ transport: 'xinput', userIndex: 0, name: 'Xbox Controller (Player 1)' },
+	xboxControllerInfo,
+	xiContext,
+)
+await xiSurface.init()
+await xiSurface.updateConfig({ stickDeadzone: 15, pressThreshold: 50, rotaryMaxRate: 2 })
+
+async function checkXi(label, state, expected, { settle = 80 } = {}) {
+	xiEvents = []
+	xiState = state
+	await sleep(settle)
+	const actual = [...xiEvents]
+	const ok = actual.length === expected.length && actual.every((v, i) => v === expected[i])
+	if (!ok) {
+		failures++
+		console.log(
+			`FAIL  ${label}\n      expected: ${JSON.stringify(expected)}\n      got:      ${JSON.stringify(actual)}`,
+		)
+	} else {
+		console.log(`PASS  ${label}`)
+	}
+}
+
+await checkXi(
+	'XInput neutral',
+	{ buttons: {}, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 } },
+	[],
+)
+await checkXi(
+	'XInput A button',
+	{ buttons: { a: true }, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 } },
+	['down 0/0'],
+)
+await checkXi(
+	'XInput A released',
+	{ buttons: { a: false }, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 } },
+	['up 0/0'],
+)
+await checkXi(
+	'XInput Xbox Guide button',
+	{ buttons: { xbox: true }, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 } },
+	['down 1/6'],
+)
+await checkXi(
+	'XInput Xbox Guide released',
+	{ buttons: { xbox: false }, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 } },
+	['up 1/6'],
+)
+await checkXi(
+	'XInput left stick up',
+	{ buttons: {}, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 1, rightX: 0, rightY: 0 } },
+	['down 2/0', 'rotR 2/6', 'var leftStickYVariable=1'],
+)
+await checkXi(
+	'XInput left stick centred',
+	{ buttons: {}, axes: { leftTrigger: 0, rightTrigger: 0, leftX: 0, leftY: 0, rightX: 0, rightY: 0 } },
+	['up 2/0', 'var leftStickYVariable=0'],
+)
+await xiSurface.close()
 
 console.log('\n--- cleanup ---')
 await surface.close()

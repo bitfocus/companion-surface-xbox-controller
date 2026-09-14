@@ -7,8 +7,7 @@ import {
 	createModuleLogger,
 	ModuleLogger,
 } from '@companion-surface/base'
-import type { HIDAsync } from 'node-hid'
-import { applyDeadzone, controlKeyToId, roundTo } from './util.js'
+import { applyDeadzone, controlKeyToId, roundTo } from '../util.js'
 import {
 	type ControlKey,
 	type ControllerAxis,
@@ -19,12 +18,12 @@ import {
 	type TriggerControl,
 	ROTARY_AXES,
 	STICK_DIRECTIONS,
-} from './models.js'
-import { createEmptyState, parseInputReport, type GamepadState } from './report.js'
-import { DEFAULT_CONFIG, parseConfig, type XboxControllerConfig } from './config.js'
-import { AXIS_VARIABLES } from './variables.js'
-
-import type { ControllerProduct } from './products.js'
+} from '../models.js'
+import { createEmptyState, type GamepadState } from '../report.js'
+import { DEFAULT_CONFIG, parseConfig, type XboxControllerConfig } from '../config.js'
+import { AXIS_VARIABLES } from '../variables.js'
+import { sharedXInputDriver } from './driver.js'
+import type { XInputDeviceInfo } from './types.js'
 
 const TRIGGERS: TriggerControl[] = ['leftTrigger', 'rightTrigger']
 
@@ -40,28 +39,19 @@ const ROTARY_MIN_RATE = 2
 const VARIABLE_FLUSH_INTERVAL = 50
 const VARIABLE_DECIMALS = 3
 
+/** Polling frequency for XInput controller state (~60 Hz) */
+const XINPUT_POLL_INTERVAL_MS = 16
+
 interface RotaryState {
-	/** Signed speed bucket: 0 when centred, otherwise -ROTARY_LEVELS..ROTARY_LEVELS */
 	level: number
 	interval: ReturnType<typeof setInterval> | undefined
 }
 
-/**
- * GIP initialization sequence packets for Xbox One and Xbox Series X|S controllers over USB.
- * Over USB, the controller starts in a dormant state and will not stream input frames until initialized.
- * (Bluetooth controllers are standard HID and must NOT receive GIP packets).
- */
-const GIP_INIT_PACKETS = [
-	// Power on
-	Buffer.from([0x05, 0x20, 0x00, 0x01, 0x00]),
-]
-
-export class XboxControllerWrapper implements SurfaceInstance {
+export class XboxXInputSurfaceWrapper implements SurfaceInstance {
 	readonly #logger: ModuleLogger
 
-	readonly #device: HIDAsync
+	readonly #userIndex: number
 	readonly #modelInfo: ControllerModelInfo
-	readonly #product: ControllerProduct | undefined
 	readonly #productName: string
 
 	readonly #surfaceId: string
@@ -70,7 +60,7 @@ export class XboxControllerWrapper implements SurfaceInstance {
 	#config: XboxControllerConfig = { ...DEFAULT_CONFIG }
 
 	readonly #state: GamepadState = createEmptyState()
-	/** Logical pressed state per control, after thresholding — the source of truth for key events */
+	/** Logical pressed state per control, after thresholding */
 	readonly #pressed = new Map<ControlKey, boolean>()
 	readonly #rotaries = new Map<RotaryControl, RotaryState>()
 
@@ -78,7 +68,9 @@ export class XboxControllerWrapper implements SurfaceInstance {
 	readonly #sentVariables = new Map<string, number>()
 	#variableFlush: ReturnType<typeof setTimeout> | undefined
 
+	#pollTimer: ReturnType<typeof setInterval> | undefined
 	#closed = false
+	#disconnectCount = 0
 
 	public get surfaceId(): string {
 		return this.#surfaceId
@@ -89,41 +81,58 @@ export class XboxControllerWrapper implements SurfaceInstance {
 
 	public constructor(
 		surfaceId: string,
-		device: HIDAsync,
+		deviceInfo: XInputDeviceInfo,
 		info: ControllerModelInfo,
-		product: ControllerProduct | undefined,
-		productName: string,
 		context: SurfaceContext,
 	) {
 		this.#logger = createModuleLogger(`Instance/${surfaceId}`)
-		this.#device = device
+		this.#userIndex = deviceInfo.userIndex
 		this.#modelInfo = info
-		this.#product = product
-		this.#productName = productName
+		this.#productName = deviceInfo.name
 		this.#surfaceId = surfaceId
 		this.#context = context
 
-		this.#device.on('data', (data: Buffer) => {
-			if (this.#closed) return
-
-			if (!parseInputReport(data, this.#state)) {
-				this.#logger.debug(`Ignoring unrecognised report of ${data.length} bytes`)
-				return
-			}
-
-			this.#applyState()
-		})
-
-		this.#device.on('error', (error: Error) => {
-			if (this.#closed) return
-
-			this.#logger.error(`Controller error: ${error}`)
-			this.#stopAllTimers()
-			this.#context.disconnect(error)
-		})
+		// Prime the variable cache with deadzone-adjusted initial readings (zeros)
+		for (const [axis, variableId] of Object.entries(AXIS_VARIABLES) as [ControllerAxis, string][]) {
+			this.#sentVariables.set(variableId, applyDeadzone(this.#state.axes[axis], this.#config.stickDeadzone))
+		}
 	}
 
-	/** Push the current controller state out as key, rotation and variable events */
+	#warnedLocked = false
+
+	#checkLocked(): boolean {
+		if (this.#context.isLocked) {
+			if (!this.#warnedLocked) {
+				this.#warnedLocked = true
+				this.#logger.warn(
+					'Surface is currently LOCKED by Companion (PIN lockout is active). In Companion Surfaces tab, select this controller and enable "Never lock this surface" to receive button and variable inputs.',
+				)
+			}
+			return true
+		}
+		this.#warnedLocked = false
+		return false
+	}
+
+	#poll(): void {
+		if (this.#closed) return
+
+		const isConnected = sharedXInputDriver.poll(this.#userIndex, this.#state)
+		if (!isConnected) {
+			this.#disconnectCount++
+			if (this.#disconnectCount > 10) {
+				this.#logger.warn(`XInput Player ${this.#userIndex + 1} disconnected`)
+				this.#closed = true
+				this.#stopAllTimers()
+				this.#context.disconnect(new Error('XInput controller disconnected'))
+			}
+			return
+		}
+
+		this.#disconnectCount = 0
+		this.#applyState()
+	}
+
 	#applyState(): void {
 		this.#applyButtons()
 		this.#applyTriggers()
@@ -151,7 +160,6 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			{ axis: ControllerAxis; negative: boolean },
 		][]) {
 			const value = applyDeadzone(this.#state.axes[axis], this.#config.stickDeadzone)
-			// Each direction only sees travel towards its own end of the axis
 			const travel = negative ? Math.max(-value, 0) : Math.max(value, 0)
 			this.#setPressed(control, this.#isPastThreshold(control, travel))
 		}
@@ -160,9 +168,7 @@ export class XboxControllerWrapper implements SurfaceInstance {
 	#applyRotaries(): void {
 		for (const [control, axis] of Object.entries(ROTARY_AXES) as [RotaryControl, ControllerAxis][]) {
 			const value = applyDeadzone(this.#state.axes[axis], this.#config.stickDeadzone)
-			const magnitude = Math.abs(value)
-			const level = magnitude === 0 ? 0 : Math.ceil(magnitude * ROTARY_LEVELS) * Math.sign(value)
-
+			const level = Math.round(value * ROTARY_LEVELS)
 			this.#setRotaryLevel(control, level)
 		}
 	}
@@ -178,32 +184,12 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		this.#scheduleVariableFlush()
 	}
 
-	/**
-	 * Apply the press threshold with hysteresis: it takes the full threshold to press, but a
-	 * lower one to release again.
-	 */
 	#isPastThreshold(key: ControlKey, magnitude: number): boolean {
 		const wasPressed = this.#pressed.get(key) ?? false
 
 		return wasPressed
 			? magnitude > this.#config.pressThreshold * RELEASE_RATIO
 			: magnitude >= this.#config.pressThreshold
-	}
-
-	#warnedLocked = false
-
-	#checkLocked(): boolean {
-		if (this.#context.isLocked) {
-			if (!this.#warnedLocked) {
-				this.#warnedLocked = true
-				this.#logger.warn(
-					'Surface is currently LOCKED by Companion (PIN lockout is active). In Companion Surfaces tab, select this controller and enable "Never lock this surface" to receive button and variable inputs.',
-				)
-			}
-			return true
-		}
-		this.#warnedLocked = false
-		return false
 	}
 
 	#setPressed(key: ControlKey, pressed: boolean): void {
@@ -246,7 +232,6 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			}
 		}
 
-		// Fire immediately when leaving centre or reversing, so the first nudge feels instant
 		if (previousLevel === 0 || Math.sign(previousLevel) !== Math.sign(level)) emit()
 
 		const maxRate = this.#config.rotaryMaxRate
@@ -283,38 +268,27 @@ export class XboxControllerWrapper implements SurfaceInstance {
 	#stopAllTimers(): void {
 		this.#stopRotaries()
 
+		if (this.#pollTimer !== undefined) {
+			clearInterval(this.#pollTimer)
+			this.#pollTimer = undefined
+		}
+
 		if (this.#variableFlush !== undefined) {
 			clearTimeout(this.#variableFlush)
 			this.#variableFlush = undefined
 		}
 	}
 
-	async #sendInitPackets(): Promise<void> {
-		for (const packet of GIP_INIT_PACKETS) {
-			try {
-				if (typeof this.#device.write === 'function') {
-					await this.#device.write(packet)
-				}
-			} catch (e) {
-				// Non-fatal: Bluetooth devices or platforms without output report support can ignore
-				this.#logger.debug(`Could not write init packet (cmd 0x${packet[0]?.toString(16)}): ${e}`)
-			}
-		}
-	}
-
 	async init(): Promise<void> {
-		if (this.#product?.transport === 'usb') {
-			await this.#sendInitPackets()
-		}
+		this.#logger.debug(`Starting XInput polling loop for ${this.#productName}`)
+		this.#pollTimer = setInterval(() => {
+			this.#poll()
+		}, XINPUT_POLL_INTERVAL_MS)
 	}
 
 	async close(): Promise<void> {
 		this.#closed = true
 		this.#stopAllTimers()
-
-		await this.#device.close().catch((e) => {
-			this.#logger.error(`Failed to close controller: ${e}`)
-		})
 	}
 
 	async updateConfig(config: Record<string, any>): Promise<void> {
@@ -323,8 +297,6 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			`Config updated: deadzone ${this.#config.stickDeadzone}, threshold ${this.#config.pressThreshold}, max rate ${this.#config.rotaryMaxRate}`,
 		)
 
-		// Rebuild from the current state so the new deadzone and rates take effect at once,
-		// rather than waiting for the next time something moves
 		this.#stopRotaries()
 		this.#applyState()
 	}

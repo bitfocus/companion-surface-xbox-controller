@@ -176,11 +176,19 @@ export function parseInputReport(data: Buffer, state: GamepadState): boolean {
 		state.axes.rightX = normaliseSigned(data.readInt16LE(OFFSET.rightX), STICK_MAX)
 		state.axes.rightY = normaliseSigned(data.readInt16LE(OFFSET.rightY), STICK_MAX)
 
+		// On Xbox Series X|S over GIP, Share button is bit 0 of the 19th byte
+		state.buttons.share = data.length >= 19 ? (data[18] & 0x01) !== 0 : false
+
 		return true
 	}
 
 	if (data.length >= BLUETOOTH_BODY_LENGTH + 1 && data[0] === BLUETOOTH_REPORT_ID) {
 		return parseBluetoothReport(data.subarray(1), state)
+	}
+
+	// Some platforms/drivers strip the leading Bluetooth Report ID (0x01), leaving the 16-byte body
+	if (data.length === BLUETOOTH_BODY_LENGTH) {
+		return parseBluetoothReport(data, state)
 	}
 
 	return false

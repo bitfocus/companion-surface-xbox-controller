@@ -11,20 +11,18 @@ The following controllers are supported:
 
 ### Connecting the controller
 
-The controller can be connected either over **USB** or over **Bluetooth**. Bluetooth works the same on
-every platform, because the controller behaves as a standard HID gamepad. USB is more involved,
-because the controller does not speak HID over the cable — it speaks Microsoft's own protocol, and
-Companion can only see it if the operating system republishes it as a HID device:
+The controller can be connected either over **USB** or over **Bluetooth** (or using an Xbox Wireless Adapter):
 
 | Platform | Over USB                                                                       | Over Bluetooth |
 | -------- | ------------------------------------------------------------------------------ | -------------- |
 | macOS    | Supported, using the driver built into macOS 11 and later                      | Supported      |
-| Windows  | Supported, using the driver built into Windows 10 and later                    | Supported      |
+| Windows  | Supported (via XInput)                                                         | Supported      |
 | Linux    | Needs the `xpad` kernel driver blacklisted, as it claims the device for itself | Supported      |
 
-If the controller does not appear, click **Rescan USB** on the Surfaces page. Companion only rescans
-when a USB device is connected or removed, so a controller that was turned on separately — a
-Bluetooth one, in particular — may need a manual rescan.
+- On Windows, controllers appear as **Xbox Controller (XInput Player 1)** (up to Player 4).
+- On macOS, controllers appear with their hardware serial number.
+
+If the controller does not appear, click **Rescan USB** on the Surfaces page.
 
 ### Button layout
 
@@ -42,8 +40,7 @@ function rather than shaped like a controller, which makes them much easier to p
 sticks. `View` and `Menu` are the two small buttons either side of the Xbox button, and `Share` is
 the button below them, if your controller has one.
 
-**The Share button only works over Bluetooth.** When the controller is connected by USB, macOS does
-not pass it on, so that cell stays inactive. Every other button works over both connections.
+**The Share button is not available over Windows USB.** Every other button works across all connections.
 
 ### Sticks and triggers
 
@@ -95,6 +92,7 @@ controller generates no traffic.
 
 ### Notes
 
+- If you have PIN Lockout enabled in Companion, gamepads start locked because they cannot enter a PIN. Go to the **Surfaces** page, click the controller, and enable **Never lock this surface** to receive inputs.
 - The Xbox button (the one in the middle) is reported like any other button, but be aware that some
   operating systems also act on it themselves.
 - Companion tries to claim the controller exclusively so that other software on the machine does not
