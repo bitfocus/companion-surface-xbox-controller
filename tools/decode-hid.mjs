@@ -30,6 +30,20 @@ console.log(`Opening ${candidate.manufacturer ?? ''} ${candidate.product ?? ''} 
 const device = new HID.HID(candidate.path)
 const state = createEmptyState()
 
+// Send GIP initialization sequence (power on, LED, security ACK) for USB controllers
+const gipInitPackets = [
+	Buffer.from([0x05, 0x20, 0x00, 0x01, 0x00]),
+	Buffer.from([0x0a, 0x20, 0x00, 0x03, 0x00, 0x01, 0x14]),
+	Buffer.from([0x06, 0x20, 0x00, 0x02, 0x01, 0x00]),
+]
+for (const packet of gipInitPackets) {
+	try {
+		device.write(packet)
+	} catch {
+		// Non-fatal if transport does not support output reports
+	}
+}
+
 /** @type {string} */
 let lastLine = ''
 let unrecognised = 0

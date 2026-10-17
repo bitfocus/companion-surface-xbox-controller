@@ -24,6 +24,8 @@ import { createEmptyState, parseInputReport, type GamepadState } from './report.
 import { DEFAULT_CONFIG, parseConfig, type XboxControllerConfig } from './config.js'
 import { AXIS_VARIABLES } from './variables.js'
 
+import type { ControllerProduct } from './products.js'
+
 const TRIGGERS: TriggerControl[] = ['leftTrigger', 'rightTrigger']
 
 /** Release at this fraction of the press threshold, so a stick held near the edge doesn't chatter */
@@ -44,11 +46,22 @@ interface RotaryState {
 	interval: ReturnType<typeof setInterval> | undefined
 }
 
+/**
+ * GIP initialization sequence packets for Xbox One and Xbox Series X|S controllers over USB.
+ * Over USB, the controller starts in a dormant state and will not stream input frames until initialized.
+ * (Bluetooth controllers are standard HID and must NOT receive GIP packets).
+ */
+const GIP_INIT_PACKETS = [
+	// Power on
+	Buffer.from([0x05, 0x20, 0x00, 0x01, 0x00]),
+]
+
 export class XboxControllerWrapper implements SurfaceInstance {
 	readonly #logger: ModuleLogger
 
 	readonly #device: HIDAsync
 	readonly #modelInfo: ControllerModelInfo
+	readonly #product: ControllerProduct | undefined
 	readonly #productName: string
 
 	readonly #surfaceId: string
@@ -78,12 +91,14 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		surfaceId: string,
 		device: HIDAsync,
 		info: ControllerModelInfo,
+		product: ControllerProduct | undefined,
 		productName: string,
 		context: SurfaceContext,
 	) {
 		this.#logger = createModuleLogger(`Instance/${surfaceId}`)
 		this.#device = device
 		this.#modelInfo = info
+		this.#product = product
 		this.#productName = productName
 		this.#surfaceId = surfaceId
 		this.#context = context
@@ -175,12 +190,30 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			: magnitude >= this.#config.pressThreshold
 	}
 
+	#warnedLocked = false
+
+	#checkLocked(): boolean {
+		if (this.#context.isLocked) {
+			if (!this.#warnedLocked) {
+				this.#warnedLocked = true
+				this.#logger.warn(
+					'Surface is currently LOCKED by Companion (PIN lockout is active). In Companion Surfaces tab, select this controller and enable "Never lock this surface" to receive button and variable inputs.',
+				)
+			}
+			return true
+		}
+		this.#warnedLocked = false
+		return false
+	}
+
 	#setPressed(key: ControlKey, pressed: boolean): void {
 		if ((this.#pressed.get(key) ?? false) === pressed) return
 		this.#pressed.set(key, pressed)
 
 		const controlId = controlKeyToId(this.#modelInfo, key)
 		if (!controlId) return
+
+		if (this.#checkLocked()) return
 
 		if (pressed) {
 			this.#context.keyDownById(controlId)
@@ -201,6 +234,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			this.#rotaries.set(control, { level, interval: undefined })
 			return
 		}
+
+		if (this.#checkLocked()) return
 
 		const rotateRight = level > 0
 		const emit = () => {
@@ -228,6 +263,8 @@ export class XboxControllerWrapper implements SurfaceInstance {
 			this.#variableFlush = undefined
 			if (this.#closed) return
 
+			if (this.#checkLocked()) return
+
 			for (const [variableId, value] of this.#pendingVariables) {
 				this.#sentVariables.set(variableId, value)
 				this.#context.sendVariableValue(variableId, value)
@@ -252,8 +289,23 @@ export class XboxControllerWrapper implements SurfaceInstance {
 		}
 	}
 
+	async #sendInitPackets(): Promise<void> {
+		for (const packet of GIP_INIT_PACKETS) {
+			try {
+				if (typeof this.#device.write === 'function') {
+					await this.#device.write(packet)
+				}
+			} catch (e) {
+				// Non-fatal: Bluetooth devices or platforms without output report support can ignore
+				this.#logger.debug(`Could not write init packet (cmd 0x${packet[0]?.toString(16)}): ${e}`)
+			}
+		}
+	}
+
 	async init(): Promise<void> {
-		// The device was opened before this instance was constructed
+		if (this.#product?.transport === 'usb') {
+			await this.#sendInitPackets()
+		}
 	}
 
 	async close(): Promise<void> {

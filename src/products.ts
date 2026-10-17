@@ -22,10 +22,13 @@ export enum ControllerModelId {
 	XboxAdaptive = 'xbox-adaptive',
 }
 
+export type ControllerTransport = 'usb' | 'bluetooth'
+
 export interface ControllerProduct {
 	vendorId: number
 	productId: number
 	modelId: ControllerModelId
+	transport: ControllerTransport
 	name: string
 }
 
@@ -35,24 +38,28 @@ export const PRODUCTS: ControllerProduct[] = [
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b12,
 		modelId: ControllerModelId.XboxSeries,
+		transport: 'usb',
 		name: 'Xbox Wireless Controller',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b13,
 		modelId: ControllerModelId.XboxSeries,
+		transport: 'bluetooth',
 		name: 'Xbox Wireless Controller',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b20,
 		modelId: ControllerModelId.XboxSeries,
+		transport: 'bluetooth',
 		name: 'Xbox Wireless Controller',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b21,
 		modelId: ControllerModelId.XboxSeries,
+		transport: 'bluetooth',
 		name: 'Xbox Wireless Controller',
 	},
 
@@ -61,18 +68,21 @@ export const PRODUCTS: ControllerProduct[] = [
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x02e0,
 		modelId: ControllerModelId.XboxOne,
+		transport: 'bluetooth',
 		name: 'Xbox One S Controller',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x02ea,
 		modelId: ControllerModelId.XboxOne,
+		transport: 'usb',
 		name: 'Xbox One S Controller',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x02fd,
 		modelId: ControllerModelId.XboxOne,
+		transport: 'bluetooth',
 		name: 'Xbox One S Controller',
 	},
 
@@ -81,18 +91,21 @@ export const PRODUCTS: ControllerProduct[] = [
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b00,
 		modelId: ControllerModelId.XboxElite,
+		transport: 'usb',
 		name: 'Xbox Elite Wireless Controller Series 2',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b05,
 		modelId: ControllerModelId.XboxElite,
+		transport: 'bluetooth',
 		name: 'Xbox Elite Wireless Controller Series 2',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b22,
 		modelId: ControllerModelId.XboxElite,
+		transport: 'bluetooth',
 		name: 'Xbox Elite Wireless Controller Series 2',
 	},
 
@@ -101,13 +114,24 @@ export const PRODUCTS: ControllerProduct[] = [
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b0a,
 		modelId: ControllerModelId.XboxAdaptive,
+		transport: 'usb',
 		name: 'Xbox Adaptive Controller',
 	},
 	{
 		vendorId: VENDOR_ID_MICROSOFT,
 		productId: 0x0b0c,
 		modelId: ControllerModelId.XboxAdaptive,
+		transport: 'bluetooth',
 		name: 'Xbox Adaptive Controller',
+	},
+
+	// Xbox 360 / Virtual XInput HID Wrapper on Windows
+	{
+		vendorId: VENDOR_ID_MICROSOFT,
+		productId: 0x028e,
+		modelId: ControllerModelId.XboxOne,
+		transport: 'usb',
+		name: 'Xbox Controller (XInput HID)',
 	},
 ]
 
